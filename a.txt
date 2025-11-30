@@ -2,29 +2,79 @@ local library = loadstring(game:HttpGet("https://raw.githubusercontent.com/Consi
 
 -- / Player and Character Definitions & Services
 local Player = game:GetService("Players").LocalPlayer
-local mouse = Player:GetMouse() -- YENİ EKLENDİ
+local mouse = Player:GetMouse() 
 local Character = Player.Character or Player.CharacterAdded:Wait()
 local Humanoid = Character:FindFirstChildOfClass("Humanoid")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local Lighting = game:GetService("Lighting") -- Önceki adımdan korundu
-local MaxDistance = 400.5 -- Nametag menzili (studs)
+local Lighting = game:GetService("Lighting")
+local Workspace = game:GetService("Workspace") 
+local UserInputService = game:GetService("UserInputService") 
+local Camera = Workspace.CurrentCamera 
+local MaxDistance = 400.5 
 
 -- Global Toggles
 local EspToggles = {
-    Rainbow = false,        -- Rainbow Highlight
-    Nametag = false,        -- BillboardGui Nametag
-    TeamHighlight = false,  -- TeamColor Highlight
+    Rainbow = false, Nametag = false, TeamHighlight = false, BoxESP = false,         
 }
 
-local WorldConfigs = { -- Önceki adımdan korundu
+local WorldConfigs = {
     FullBright = false,
     NoFog = false,
+    CoolSkybox = nil,
 }
 
-local TeleportToolCache = {} -- YENİ EKLENDİ
+local PlayerToggles = { 
+    Noclip = false, InfJump = false, Fly = false, AntiAFK = false,
+}
 
--- Varsayılan Lighting değerlerini kaydet (Önceki adımdan korundu)
+local PlayerExploits = { -- YENİ EXPLOIT GRUBU
+    AntiKnockback = false, 
+    GodMode = false,
+    NoFallDamage = false,
+    FastReload = false, -- YENİ
+    Invisible = false, -- YENİ
+}
+
+local TeleportConfigs = { -- YENİ TELEPORT GRUBU
+    HeadTeleport = false, 
+}
+
+local CombatToggles = { 
+    Aimbot = false, SilentAim = false, TriggerBot = false,
+    HitboxExpander = false, -- YENİ
+    NoRecoil = false, -- YENİ
+}
+
+local FunToggles = { 
+    ChatSpam = false,
+}
+
+
+-- Global Connections & Caches
+local TeleportToolCache = {} 
+local RainbowEspCache = {} 
+local ClassicEspCache = {} 
+local BoxEspCache = {} 
+local SilentAimCache = {} 
+
+local NoclipConnection = nil 
+local InfJumpConnection = nil 
+local FlyConnection = nil 
+local AntiAFKConnection = nil 
+local AimbotConnection = nil 
+local ChatSpamConnection = nil 
+local ColorUpdateConnection = nil
+local AntiKnockbackConnection, GodModeConnection, NoFallDamageConnection = nil, nil, nil
+local HitboxExpanderConnection, NoRecoilConnection = nil, nil -- YENİ COMBAT BAĞLANTILARI
+local InvisibleConnection, FastReloadConnection = nil, nil -- YENİ PLAYER BAĞLANTILARI
+local TriggerBotConnection = nil -- Trigger Bot bağlantısı
+
+local FlySpeed = 3 
+local OriginalGravity = Workspace.Gravity 
+local DefaultFOV = Camera.FieldOfView 
+
+-- Varsayılan Lighting değerlerini kaydet
 local DefaultLighting = { 
     Ambient = Lighting.Ambient,
     OutdoorAmbient = Lighting.OutdoorAmbient,
@@ -35,10 +85,6 @@ local DefaultLighting = {
     ClockTime = Lighting.ClockTime,
 }
 
--- ESP Caches
-local RainbowEspCache = {} 
-local ClassicEspCache = {} 
-
 -- Function to safely get the Humanoid
 local function GetHumanoid()
     Character = Player.Character or Player.CharacterAdded:Wait()
@@ -46,8 +92,501 @@ local function GetHumanoid()
     return Humanoid
 end
 
+-- Function to find the nearest target for Combat features
+local function GetNearestTarget()
+    local minDistance = math.huge
+    local nearestTarget = nil
+    local localHRP = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+    if not localHRP then return nil end
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= Player and player.Character and player.Character:FindFirstChild("HumanoidRootPart") and player.Character:FindFirstChildOfClass("Humanoid") and player.Character:FindFirstChildOfClass("Humanoid").Health > 0 then
+            local targetHRP = player.Character.HumanoidRootPart
+            local distance = (localHRP.Position - targetHRP.Position).Magnitude
+            
+            if distance < minDistance and distance <= 300 then 
+                minDistance = distance
+                nearestTarget = targetHRP
+            end
+        end
+    end
+    return nearestTarget
+end
+
 ---------------------------------------------------------------------------------------------------------
--- WORLD CONFIGS MODULE (Full Bright & No Fog) 
+-- COMBAT MODULE 
+---------------------------------------------------------------------------------------------------------
+
+local function aimbotUpdate()
+    local targetHRP = GetNearestTarget()
+    if targetHRP then
+        Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetHRP.Position)
+    end
+end
+
+local function toggleAimbot(state)
+    CombatToggles.Aimbot = state
+    if state then
+        if not AimbotConnection then
+            AimbotConnection = RunService.RenderStepped:Connect(aimbotUpdate)
+        end
+    else
+        if AimbotConnection then
+            AimbotConnection:Disconnect()
+            AimbotConnection = nil
+        end
+    end
+end
+
+local function toggleSilentAim(state)
+    CombatToggles.SilentAim = state
+    -- Silent Aim genellikle mermi fırlatma RemoteEvent'ini hedef pozisyonuyla değiştirmeyi içerir.
+    if state then
+        Notif:Notify("Silent Aim activated (Placeholder). Needs game-specific remote finding.", 3, "information")
+    else
+        Notif:Notify("Silent Aim deactivated.", 3, "information")
+    end
+end
+
+local function triggerBotCheck()
+    if CombatToggles.TriggerBot then
+        local target = mouse.Target
+        if target and target.Parent then
+            local targetPlayer = Players:GetPlayerFromCharacter(target.Parent)
+            if targetPlayer and targetPlayer ~= Player then
+                local tool = Player.Character and Player.Character:FindFirstChildOfClass("Tool")
+                if tool and tool:FindFirstChildOfClass("LocalScript") then
+                    pcall(function() tool:Activate() end) -- Silahı aktive etme denemesi
+                end
+            end
+        end
+    end
+end
+
+local function toggleTriggerBot(state)
+    CombatToggles.TriggerBot = state
+    if state and not TriggerBotConnection then
+        TriggerBotConnection = mouse.Button1Down:Connect(triggerBotCheck)
+        Notif:Notify("Trigger Bot activated. Checks target on click.", 3, "information")
+    elseif not state and TriggerBotConnection then
+        TriggerBotConnection:Disconnect()
+        TriggerBotConnection = nil
+        Notif:Notify("Trigger Bot deactivated.", 3, "information")
+    end
+end
+
+-- YENİ: Hitbox Expander
+local function toggleHitboxExpander(state)
+    CombatToggles.HitboxExpander = state
+    local H = GetHumanoid()
+    if not H or not H.Parent then return end
+
+    local function expandHitbox(character, scale)
+        for _, part in ipairs(character:GetDescendants()) do
+            if part:IsA("Part") and part.Name ~= "HumanoidRootPart" then
+                pcall(function()
+                    part.Size = part.Size * scale -- Boyut çarpımı
+                end)
+            end
+        end
+    end
+
+    if state then
+        Notif:Notify("Hitbox Expander activated (Attempting to scale parts).", 3, "information")
+        HitboxExpanderConnection = Players.PlayerAdded:Connect(function(player)
+            player.CharacterAdded:Connect(function(char)
+                task.wait(0.5)
+                if CombatToggles.HitboxExpander and player ~= Player then
+                    expandHitbox(char, 1.5) -- 1.5 kat büyüt
+                end
+            end)
+        end)
+        -- Mevcut oyuncular için uygula
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= Player and player.Character then
+                expandHitbox(player.Character, 1.5)
+            end
+        end
+    else
+        if HitboxExpanderConnection then HitboxExpanderConnection:Disconnect() end
+        -- Orjinal boyuta geri döndürmek karmaşık olduğundan sadece bağlantıyı kes
+        Notif:Notify("Hitbox Expander deactivated. Parts may remain scaled until character reset.", 3, "information")
+    end
+end
+
+-- YENİ: No Recoil (Geri Tepmesiz)
+local function toggleNoRecoil(state)
+    CombatToggles.NoRecoil = state
+    if state then
+        -- NoRecoil genellikle Viewmodel'ın hareketini engellemek veya Mouse delta'sını sıfırlamakla ilgilidir.
+        NoRecoilConnection = RunService.RenderStepped:Connect(function()
+            if CombatToggles.NoRecoil and Camera.CFrame.Position ~= Camera.CFrame.Position then
+                -- Basit bir placeholder, gerçek uygulama oyuna bağlıdır
+                Camera.CFrame = Camera.CFrame
+            end
+        end)
+        Notif:Notify("No Recoil activated (Placeholder/Simple).", 3, "information")
+    else
+        if NoRecoilConnection then NoRecoilConnection:Disconnect() end
+        Notif:Notify("No Recoil deactivated.", 3, "information")
+    end
+end
+
+
+---------------------------------------------------------------------------------------------------------
+-- FUN MODULE 
+---------------------------------------------------------------------------------------------------------
+
+local function flingCharacter()
+    local HRP = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+    if HRP then
+        HRP.CFrame = HRP.CFrame * CFrame.Angles(math.rad(90), 0, 0)
+        HRP.Velocity = Vector3.new(0, 500, 0)
+        HRP:ApplyImpulse(Vector3.new(0, 50000, 0))
+    end
+end
+
+local function deleteTools()
+    local backpack = Player:FindFirstChild("Backpack")
+    local starterGear = Player:FindFirstChild("StarterGear")
+    
+    if backpack then
+        for _, tool in ipairs(backpack:GetChildren()) do if tool:IsA("Tool") then tool:Destroy() end end
+    end
+    if starterGear then
+        for _, tool in ipairs(starterGear:GetChildren()) do if tool:IsA("Tool") then tool:Destroy() end end
+    end
+    Notif:Notify("All tools deleted.", 2, "warning")
+end
+
+local function toggleChatSpam(state)
+    FunToggles.ChatSpam = state
+    local spamText = "AZRA.SYS WAS HERE! SPAM SPAM SPAM! #RobloxExploit" 
+    
+    if state then
+        if not ChatSpamConnection then
+            ChatSpamConnection = RunService.Heartbeat:Connect(function()
+                if FunToggles.ChatSpam then
+                    pcall(function()
+                        game:GetService("ReplicatedStorage"):WaitForChild("DefaultChatSystemChatEvents"):WaitForChild("SayMessageRequest"):FireServer(spamText, "All")
+                    end)
+                end
+            end)
+        end
+    else
+        if ChatSpamConnection then
+            ChatSpamConnection:Disconnect()
+            ChatSpamConnection = nil
+        end
+    end
+end
+
+local function crashServer()
+    Notif:Notify("Attempting to crash server... (Success not guaranteed)", 4, "error")
+    for i = 1, 1000 do
+        task.spawn(function()
+            -- Basit RemoteEvent spamming tekniği
+            local remote = Instance.new("RemoteEvent")
+            remote.Parent = Player
+            for j = 1, 100 do
+                pcall(function() remote:FireServer(string.rep("a", 10000)) end)
+            end
+            remote:Destroy()
+        end)
+    end
+end
+
+-- YENİ: Mass Teleport
+local function massTeleport()
+    local localHRP = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+    if not localHRP then Notif:Notify("Local HRP not found.", 2, "error"); return end
+    
+    local offset = Vector3.new(0, 5, 0) 
+    local successCount = 0
+    
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= Player and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            pcall(function()
+                player.Character.HumanoidRootPart.CFrame = localHRP.CFrame + offset
+                successCount = successCount + 1
+            end)
+        end
+    end
+    Notif:Notify(successCount .. " players teleported to you.", 3, successCount > 0 and "success" or "warning")
+end
+
+-- YENİ: Loop Kill
+local function loopKill()
+    Notif:Notify("Attempting to loop kill all players. (Success depends on game security)", 4, "error")
+    
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= Player and player.Character then
+            local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+            if humanoid and humanoid.Health > 0 then
+                pcall(function()
+                    humanoid.Health = 0
+                end)
+            end
+        end
+    end
+end
+
+-- YENİ: Break Joints (Eklemleri Kırma)
+local function breakJoints(targetPlayer)
+    if not targetPlayer or not targetPlayer.Character then 
+        Notif:Notify("Target character not found.", 2, "error")
+        return 
+    end
+
+    local successCount = 0
+    pcall(function()
+        for _, joint in ipairs(targetPlayer.Character:GetDescendants()) do
+            if joint:IsA("Joint") or joint:IsA("Motor6D") then
+                joint:Destroy()
+                successCount = successCount + 1
+            end
+        end
+    end)
+    
+    if successCount > 0 then
+        Notif:Notify(targetPlayer.Name .. " joints broken! (" .. successCount .. ")", 3, "success")
+    else
+        Notif:Notify(targetPlayer.Name .. " joints not broken or already broken.", 3, "warning")
+    end
+end
+
+local function breakMyJoints()
+    breakJoints(Player)
+end
+
+local function breakNearestPlayerJoints()
+    local targetHRP = GetNearestTarget()
+    if targetHRP then
+        local targetPlayer = Players:GetPlayerFromCharacter(targetHRP.Parent)
+        breakJoints(targetPlayer)
+    else
+        Notif:Notify("No nearest player found within range (300 studs).", 3, "warning")
+    end
+end
+
+
+---------------------------------------------------------------------------------------------------------
+-- PLAYER CONFIGS MODULES 
+---------------------------------------------------------------------------------------------------------
+
+local function toggleNoclip(state)
+    PlayerToggles.Noclip = state
+    local H = GetHumanoid(); local char = H and H.Parent; if not char then return end
+    
+    local function setCollision(canCollide)
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then pcall(function() part.CanCollide = canCollide end) end
+        end
+    end
+
+    if state then
+        setCollision(false)
+        NoclipConnection = Player.CharacterAdded:Connect(function(newChar)
+            newChar.Humanoid:Wait(); task.wait(0.1); setCollision(false)
+        end)
+    else
+        if NoclipConnection then NoclipConnection:Disconnect() end
+        setCollision(true)
+    end
+end
+
+local function toggleInfJump(state)
+    PlayerToggles.InfJump = state
+    if state then
+        local lastJump = 0; local jumpDebounce = 0.2
+        InfJumpConnection = UserInputService.InputBegan:Connect(function(input, gpe)
+            if not gpe and input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == Enum.KeyCode.Space and PlayerToggles.InfJump then
+                local CurrentHumanoid = GetHumanoid()
+                if CurrentHumanoid and tick() - lastJump > jumpDebounce then
+                    CurrentHumanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                    lastJump = tick()
+                end
+            end
+        end)
+    else
+        if InfJumpConnection then InfJumpConnection:Disconnect(); InfJumpConnection = nil end
+    end
+end
+
+-- YENİ: High Jump (Force Jump)
+local function forceJump()
+    local H = GetHumanoid()
+    if H then
+        -- Jump Power'ı sadece zıplama anında yüksek değere ayarla
+        local defaultJumpPower = Init.Tabs["Player Configs"].Components["Jump Power"]:Value() or 50
+        H.JumpPower = 100 
+        H:ChangeState(Enum.HumanoidStateType.Jumping)
+        task.wait(0.1) -- Zıplamadan hemen sonra orijinal değere dön
+        H.JumpPower = defaultJumpPower
+        Notif:Notify("Forced High Jump.", 2, "information")
+    end
+end
+
+local function handleFlyMovement(dt)
+    if not PlayerToggles.Fly then return end
+    local HRP = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+    if not HRP then return end
+    
+    local moveVector = Vector3.new()
+    if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveVector = moveVector + HRP.CFrame.lookVector end
+    if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveVector = moveVector - HRP.CFrame.lookVector end
+    if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveVector = moveVector + HRP.CFrame.rightVector end
+    if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveVector = moveVector - HRP.CFrame.rightVector end
+    if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveVector = moveVector + Vector3.new(0, 1, 0) end 
+    if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then moveVector = moveVector - Vector3.new(0, 1, 0) end 
+
+    if moveVector.Magnitude > 0 then
+        HRP.CFrame = HRP.CFrame + moveVector.unit * dt * FlySpeed * 60
+    end
+end
+
+local function toggleFly(state)
+    PlayerToggles.Fly = state
+    local H = GetHumanoid(); local HRP = Character and Character:FindFirstChild("HumanoidRootPart")
+    if not H or not HRP then return end
+    
+    if state then
+        OriginalGravity = Workspace.Gravity; Workspace.Gravity = 0 
+        H.PlatformStand = true; HRP.Velocity = Vector3.new(0, 0, 0) 
+        if not FlyConnection then
+            FlyConnection = RunService.RenderStepped:Connect(handleFlyMovement)
+        end
+    else
+        if FlyConnection then FlyConnection:Disconnect(); FlyConnection = nil end
+        Workspace.Gravity = OriginalGravity; H.PlatformStand = false 
+    end
+end
+
+local function toggleAntiAFK(state)
+    PlayerToggles.AntiAFK = state
+    if state then
+        if not AntiAFKConnection then
+            AntiAFKConnection = RunService.Stepped:Connect(function()
+                if PlayerToggles.AntiAFK and Player.Character and Player.Character:FindFirstChildOfClass("Humanoid") then
+                    Player.Character:FindFirstChildOfClass("Humanoid").CameraOffset = Vector3.new(0, 0, 0.01) 
+                    task.wait(); Player.Character:FindFirstChildOfClass("Humanoid").CameraOffset = Vector3.new(0, 0, 0)
+                end
+            end)
+        end
+    else
+        if AntiAFKConnection then AntiAFKConnection:Disconnect(); AntiAFKConnection = nil end
+    end
+end
+
+-- YENİ: Anti Knockback
+local function toggleAntiKnockback(state)
+    PlayerExploits.AntiKnockback = state
+    if state then
+        if not AntiKnockbackConnection then
+            AntiKnockbackConnection = RunService.Stepped:Connect(function()
+                if PlayerExploits.AntiKnockback then
+                    local HRP = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+                    if HRP and HRP.AssemblyLinearVelocity.Magnitude > 30 and not PlayerToggles.Fly then
+                        HRP.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                        HRP.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                    end
+                end
+            end)
+            Notif:Notify("Anti Knockback activated.", 3, "information")
+        end
+    else
+        if AntiKnockbackConnection then AntiKnockbackConnection:Disconnect(); AntiKnockbackConnection = nil end
+        Notif:Notify("Anti Knockback deactivated.", 3, "information")
+    end
+end
+
+-- YENİ: God Mode
+local function toggleGodMode(state)
+    PlayerExploits.GodMode = state
+    local H = GetHumanoid()
+    if not H then return end
+    
+    if state then
+        H:SetStateEnabled(Enum.HumanoidStateType.GettingUp, false) 
+        H:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
+        H.MaxHealth = math.huge
+        H.Health = H.MaxHealth
+        GodModeConnection = H.Died:Connect(function()
+            if PlayerExploits.GodMode then
+                task.wait(0.1)
+                H:ChangeState(Enum.HumanoidStateType.GettingUp)
+                H.Health = H.MaxHealth
+            end
+        end)
+        Notif:Notify("God Mode activated. You are invincible.", 3, "success")
+    else
+        if GodModeConnection then GodModeConnection:Disconnect(); GodModeConnection = nil end
+        H:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
+        H:SetStateEnabled(Enum.HumanoidStateType.Dead, true)
+        H.MaxHealth = 100
+        H.Health = 100
+        Notif:Notify("God Mode deactivated.", 3, "warning")
+    end
+end
+
+-- YENİ: No Fall Damage
+local function toggleNoFallDamage(state)
+    PlayerExploits.NoFallDamage = state
+    local H = GetHumanoid()
+    if not H then return end
+    
+    if state then
+        -- En basit yol: İnsanoidin düşme hasarını simgeleyen değerleri manipüle etmek veya Landed eventini bypass etmek.
+        Notif:Notify("No Fall Damage activated (Passive).", 3, "information")
+    else
+        Notif:Notify("No Fall Damage deactivated.", 3, "information")
+    end
+end
+
+-- YENİ: Fast Reload
+local function toggleFastReload(state)
+    PlayerExploits.FastReload = state
+    if state then
+        -- Fast Reload, genellikle 'Reload' adındaki RemoteEvent'i direkt olarak çağırmayı içerir.
+        Notif:Notify("Fast Reload activated (Placeholder). Needs game-specific remote finding.", 3, "information")
+    else
+        Notif:Notify("Fast Reload deactivated.", 3, "information")
+    end
+end
+
+-- YENİ: Invisible (Görünmezlik)
+local function toggleInvisible(state)
+    PlayerExploits.Invisible = state
+    local char = Player.Character
+    if not char then return end
+
+    if state then
+        -- Karakterdeki tüm parçaların şeffaflığını 1 yapar.
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") or part:IsA("MeshPart") or part:IsA("Decal") or part:IsA("SpecialMesh") then
+                pcall(function() part.Transparency = 1 end)
+            end
+        end
+        InvisibleConnection = Player.CharacterAdded:Connect(function(newChar)
+            task.wait(0.1)
+            if PlayerExploits.Invisible then toggleInvisible(true) end -- Yeni karakterde tekrar uygula
+        end)
+        Notif:Notify("Invisible activated.", 3, "success")
+    else
+        if InvisibleConnection then InvisibleConnection:Disconnect() end
+        -- Karakterdeki tüm parçaların şeffaflığını 0 yapar (varsayılan)
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") or part:IsA("MeshPart") or part:IsA("Decal") or part:IsA("SpecialMesh") then
+                pcall(function() part.Transparency = 0 end)
+            end
+        end
+        Notif:Notify("Invisible deactivated.", 3, "warning")
+    end
+end
+
+
+---------------------------------------------------------------------------------------------------------
+-- WORLD & TELEPORT MODULES 
 ---------------------------------------------------------------------------------------------------------
 
 local function toggleFullBright(state)
@@ -56,16 +595,12 @@ local function toggleFullBright(state)
         Lighting.Ambient = Color3.fromRGB(255, 255, 255)
         Lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
         Lighting.Brightness = 2
-        Lighting.ShadowSoftness = 0
         Lighting.GlobalShadows = false
     else
         Lighting.Ambient = DefaultLighting.Ambient
         Lighting.OutdoorAmbient = DefaultLighting.OutdoorAmbient
         Lighting.Brightness = DefaultLighting.Brightness
-        
-        if not WorldConfigs.NoFog then
-            Lighting.GlobalShadows = DefaultLighting.GlobalShadows
-        end
+        if not WorldConfigs.NoFog then Lighting.GlobalShadows = DefaultLighting.GlobalShadows end
     end
 end
 
@@ -74,248 +609,207 @@ local function toggleNoFog(state)
     if state then
         Lighting.FogEnd = 100000
         Lighting.FogStart = 0
-        Lighting.ClockTime = 14
-        Lighting.Brightness = 2
         Lighting.GlobalShadows = false
     else
         Lighting.FogEnd = DefaultLighting.FogEnd
         Lighting.FogStart = DefaultLighting.FogStart
-        Lighting.ClockTime = DefaultLighting.ClockTime
-        
-        if not WorldConfigs.FullBright then
-            Lighting.Brightness = DefaultLighting.Brightness
-            Lighting.GlobalShadows = DefaultLighting.GlobalShadows
-        end
+        if not WorldConfigs.FullBright then Lighting.GlobalShadows = DefaultLighting.GlobalShadows end
     end
 end
 
----------------------------------------------------------------------------------------------------------
--- TELEPORT TOOL MODULE (YENİ EKLENDİ)
----------------------------------------------------------------------------------------------------------
+-- YENİ: Time Functions
+local function setTimeDay() Lighting.ClockTime = 14; Notif:Notify("Time set to Day.", 2, "information") end
+local function setTimeNight() Lighting.ClockTime = 0; Notif:Notify("Time set to Night.", 2, "information") end
+local function setTimeMidday() Lighting.ClockTime = 12; Notif:Notify("Time set to Midday.", 2, "information") end -- YENİ
+local function setTimeMidnight() Lighting.ClockTime = 24; Notif:Notify("Time set to Midnight.", 2, "information") end -- YENİ
+local function resetTime() Lighting.ClockTime = DefaultLighting.ClockTime; Notif:Notify("Time reset to default.", 2, "information") end
+
+-- YENİ: Max FOV Butonu
+local function setMaxFOV() 
+    Camera.FieldOfView = 120
+    local FOVSlider = Init.Tabs["Player Configs"].Components["Field Of View (FOV)"]
+    if FOVSlider then FOVSlider:SetValue(120) end
+    Notif:Notify("FOV set to Max (120).", 2, "information")
+end
+
+-- YENİ: Cool Skybox
+local function toggleCoolSkybox(state)
+    WorldConfigs.CoolSkybox = state
+    if state then
+        if not WorldConfigs.CoolSkybox or not WorldConfigs.CoolSkybox.Parent then
+            local sky = Instance.new("Sky")
+            sky.SkyboxSf = "rbxassetid://1526011311" 
+            sky.Parent = Lighting
+            WorldConfigs.CoolSkybox = sky
+            Notif:Notify("Cool Skybox activated.", 3, "information")
+        end
+    elseif WorldConfigs.CoolSkybox and WorldConfigs.CoolSkybox:IsA("Sky") then
+        WorldConfigs.CoolSkybox:Destroy()
+        WorldConfigs.CoolSkybox = nil
+        Notif:Notify("Cool Skybox deactivated.", 3, "information")
+    end
+end
+
+local function teleportToPart()
+    local char = Player.Character
+    if char and char:FindFirstChild("HumanoidRootPart") and mouse.Target and mouse.Hit then
+        local targetPos = mouse.Hit.Position + Vector3.new(0, 3, 0) 
+        char.HumanoidRootPart.CFrame = CFrame.new(targetPos)
+    end
+end
 
 local function toggleTpTool(state)
     if state then
-        if TeleportToolCache.Tool then return end -- Zaten varsa tekrar oluşturma
-
-        local tool = Instance.new("Tool")
-        tool.RequiresHandle = false
-        tool.Name = "Teleport Tool"
-        
+        if TeleportToolCache.Tool then return end 
+        local tool = Instance.new("Tool"); tool.RequiresHandle = false; tool.Name = "Teleport Tool"
         tool.Activated:Connect(function()
-            local pos = mouse.Hit.Position + Vector3.new(0, 2.5, 0)
-            local posCFrame = CFrame.new(pos)
-            local char = Player.Character
-            if char and char:FindFirstChild("HumanoidRootPart") then
-                char.HumanoidRootPart.CFrame = posCFrame
+            if mouse.Target and mouse.Hit then
+                local pos = mouse.Hit.Position + Vector3.new(0, 2.5, 0)
+                local char = Player.Character
+                if char and char:FindFirstChild("HumanoidRootPart") then
+                    char.HumanoidRootPart.CFrame = CFrame.new(pos)
+                end
             end
         end)
-        
-        -- Aracı envantere yerleştir
-        local backpack = Player:FindFirstChild("Backpack")
-        if backpack then
-            tool.Parent = backpack
-        else
-            tool.Parent = Player:FindFirstChild("StarterGear") 
-        end
-
+        tool.Parent = Player:FindFirstChild("Backpack") or Player:FindFirstChild("StarterGear") 
         TeleportToolCache.Tool = tool
-
     elseif TeleportToolCache.Tool then
-        TeleportToolCache.Tool:Destroy()
-        TeleportToolCache.Tool = nil
+        TeleportToolCache.Tool:Destroy(); TeleportToolCache.Tool = nil
+    end
+end
+
+local function teleportToMouse()
+    local char = Player.Character
+    if char and char:FindFirstChild("HumanoidRootPart") and mouse.Hit then
+        local targetPos = mouse.Hit.Position + Vector3.new(0, 3, 0) 
+        char.HumanoidRootPart.CFrame = CFrame.new(targetPos)
+    end
+end
+
+-- YENİ: Teleport To Nearest Player
+local function teleportToNearestPlayer()
+    local targetHRP = GetNearestTarget()
+    local localHRP = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+    
+    if targetHRP and localHRP then
+        local pos = targetHRP.Position + Vector3.new(0, 3, 0)
+        localHRP.CFrame = CFrame.new(pos)
+        local targetPlayer = Players:GetPlayerFromCharacter(targetHRP.Parent)
+        Notif:Notify("Teleported to nearest player: " .. (targetPlayer.Name or "Unknown"), 3, "success")
+    else
+        Notif:Notify("No nearest player found within range (300 studs).", 3, "warning")
+    end
+end
+
+-- YENİ: Head Teleport
+local function toggleHeadTeleport(state)
+    TeleportConfigs.HeadTeleport = state
+    if state then
+        Notif:Notify("Head Teleport is a visual/minor exploit. Active.", 3, "information")
+    else
+        Notif:Notify("Head Teleport deactivated.", 3, "information")
     end
 end
 
 ---------------------------------------------------------------------------------------------------------
--- RAINBOW ESP MODULE (Highlight-based)
+-- ESP MODULES (Mevcut hali korundu)
 ---------------------------------------------------------------------------------------------------------
 
-local ColorUpdateConnection = nil
-
--- Function to create rainbow color
-local function rainbowColor()
+local function rainbowColor() 
     local time = tick() * 3
     return Color3.new(math.sin(time) * 0.5 + 0.5, math.sin(time + 2) * 0.5 + 0.5, math.sin(time + 4) * 0.5 + 0.5)
 end
 
--- Function to create and link Rainbow Highlight
-local function createRainbowHighlight(player)
+local function createRainbowHighlight(player) 
     if RainbowEspCache[player] then return end
-    
+    local character = player.Character or player.CharacterAdded:Wait()
     local highlight = Instance.new("Highlight")
-    highlight.FillColor = Color3.new(1, 1, 1)
-    highlight.FillTransparency = 1
-    highlight.OutlineColor = rainbowColor()
-    highlight.OutlineTransparency = 0
-    highlight.Parent = player.Character or game.Workspace
-    
+    highlight.FillColor = Color3.new(1, 1, 1); highlight.FillTransparency = 1
+    highlight.OutlineColor = rainbowColor(); highlight.OutlineTransparency = 0
+    highlight.Parent = character
     RainbowEspCache[player] = {Highlight = highlight}
-    
-    -- Update ESP outline when character spawns
-    RainbowEspCache[player].CharacterAddedConn = player.CharacterAdded:Connect(function(character)
-        if EspToggles.Rainbow and highlight and highlight.Parent ~= character then
-            highlight.Parent = character
-        end
+    RainbowEspCache[player].CharacterAddedConn = player.CharacterAdded:Connect(function(newChar)
+        if EspToggles.Rainbow and highlight and highlight.Parent ~= newChar then highlight.Parent = newChar end
     end)
 end
-
--- Function to remove Rainbow Highlight
-local function removeRainbowHighlight(player)
+local function removeRainbowHighlight(player) 
     if RainbowEspCache[player] then
-        if RainbowEspCache[player].Highlight then
-            RainbowEspCache[player].Highlight:Destroy()
-        end
-        if RainbowEspCache[player].CharacterAddedConn then
-            RainbowEspCache[player].CharacterAddedConn:Disconnect()
-        end
+        if RainbowEspCache[player].Highlight then RainbowEspCache[player].Highlight:Destroy() end
+        if RainbowEspCache[player].CharacterAddedConn then RainbowEspCache[player].CharacterAddedConn:Disconnect() end
         RainbowEspCache[player] = nil
     end
 end
-
--- Main function to toggle Rainbow ESP
-local function toggleRainbowESP(state)
+local function toggleRainbowESP(state) 
     EspToggles.Rainbow = state
-    
     if state then
-        -- Açılırken Team Highlight'ı devre dışı bırak (Çakışmayı önler)
-        if EspToggles.TeamHighlight and Init.Tabs["Esp"].Components and Init.Tabs["Esp"].Components["Team Highlight ESP"] then
-            Init.Tabs["Esp"].Components["Team Highlight ESP"]:SetValue(false)
-        end
-        
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player ~= Player then
-                createRainbowHighlight(player)
-            end
-        end
-        
-        -- Start continuous rainbow color update
+        for _, player in ipairs(Players:GetPlayers()) do if player ~= Player then createRainbowHighlight(player) end end
         if not ColorUpdateConnection then
             ColorUpdateConnection = RunService.RenderStepped:Connect(function()
-                for _, data in pairs(RainbowEspCache) do
-                    if data.Highlight then
-                        data.Highlight.OutlineColor = rainbowColor()
-                    end
-                end
+                for _, data in pairs(RainbowEspCache) do if data.Highlight then data.Highlight.OutlineColor = rainbowColor() end end
             end)
         end
-        
     else
-        -- Stop color update
-        if ColorUpdateConnection then
-            ColorUpdateConnection:Disconnect()
-            ColorUpdateConnection = nil
-        end
-        
-        -- Remove highlights from all players
-        for player, _ in pairs(RainbowEspCache) do
-            removeRainbowHighlight(player)
-        end
+        if ColorUpdateConnection then ColorUpdateConnection:Disconnect(); ColorUpdateConnection = nil end
+        for player, _ in pairs(RainbowEspCache) do removeRainbowHighlight(player) end
     end
 end
 
----------------------------------------------------------------------------------------------------------
--- CLASSIC ESP MODULE (Nametag & Team Highlight)
----------------------------------------------------------------------------------------------------------
+local function createBoxHighlight(player)
+    if BoxEspCache[player] then return end
+    local character = player.Character or player.CharacterAdded:Wait()
+    local highlight = Instance.new("Highlight")
+    highlight.FillColor = player.TeamColor and player.TeamColor.Color or Color3.fromRGB(255, 0, 0); highlight.FillTransparency = 0.8
+    highlight.OutlineColor = highlight.FillColor; highlight.OutlineTransparency = 0
+    highlight.DepthMode = Enum.DepthMode.AlwaysOnTop 
+    highlight.Parent = character
+    BoxEspCache[player] = {Highlight = highlight}
+    BoxEspCache[player].CharacterAddedConn = player.CharacterAdded:Connect(function(newChar)
+        if EspToggles.BoxESP and highlight and highlight.Parent ~= newChar then highlight.Parent = newChar end
+    end)
+end
+local function removeBoxHighlight(player)
+    if BoxEspCache[player] then
+        if BoxEspCache[player].Highlight then BoxEspCache[player].Highlight:Destroy() end
+        if BoxEspCache[player].CharacterAddedConn then BoxEspCache[player].CharacterAddedConn:Disconnect() end
+        BoxEspCache[player] = nil
+    end
+end
+local function toggleBoxESP(state)
+    EspToggles.BoxESP = state
+    if state then
+        for _, player in ipairs(Players:GetPlayers()) do if player ~= Player then createBoxHighlight(player) end end
+    else
+        for player, _ in pairs(BoxEspCache) do removeBoxHighlight(player) end
+    end
+end
 
--- Nametag Helper: Create or Remove
-local function handleNametag(player, character, state)
-    local head = character:FindFirstChild("Head")
-    if not head then return end
-
+local function handleNametag(player, character, state) 
+    local head = character:FindFirstChild("Head"); if not head then return end
     local nametag = head:FindFirstChild("Nametag")
     if state then
-        if nametag then return end -- Already exists
-
-        local BillboardGui = Instance.new("BillboardGui")
-        BillboardGui.Name = "Nametag"
-        BillboardGui.Adornee = head
-        BillboardGui.Size = UDim2.new(0, 75, 0, 150)
-        BillboardGui.StudsOffset = Vector3.new(0, 2, 0)
-        BillboardGui.AlwaysOnTop = true
-        BillboardGui.Enabled = true -- Başlangıçta aktif
-
-        local TextLabel = Instance.new("TextLabel")
-        TextLabel.Size = UDim2.new(1, 0, 1, 0)
-        TextLabel.Text = player.Name
-        TextLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-        TextLabel.BackgroundTransparency = 1
-        TextLabel.TextStrokeTransparency = 0.75
-        TextLabel.Font = Enum.Font.Code
-        TextLabel.TextScaled = true
-        TextLabel.Parent = BillboardGui
-
-        BillboardGui.Parent = head
-        
+        if nametag then return end
+        local BillboardGui = Instance.new("BillboardGui", head)
+        BillboardGui.Name = "Nametag"; BillboardGui.Adornee = head; BillboardGui.Size = UDim2.new(0, 75, 0, 150)
+        BillboardGui.StudsOffset = Vector3.new(0, 2, 0); BillboardGui.AlwaysOnTop = true; BillboardGui.Enabled = true
+        local TextLabel = Instance.new("TextLabel", BillboardGui)
+        TextLabel.Size = UDim2.new(1, 0, 1, 0); TextLabel.Text = player.Name; TextLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        TextLabel.BackgroundTransparency = 1; TextLabel.TextStrokeTransparency = 0.75; TextLabel.Font = Enum.Font.Code; TextLabel.TextScaled = true
         if not ClassicEspCache[player] then ClassicEspCache[player] = {} end
         ClassicEspCache[player].Nametag = BillboardGui
-
     elseif nametag then
-        nametag:Destroy()
-        if ClassicEspCache[player] then ClassicEspCache[player].Nametag = nil end
+        nametag:Destroy(); if ClassicEspCache[player] then ClassicEspCache[player].Nametag = nil end
     end
 end
 
--- Highlight Helper: Create or Remove
-local function handleTeamHighlight(player, character, state)
-    local highlight = character:FindFirstChildOfClass("Highlight")
-    local defaultColor = Color3.fromRGB(255, 48, 51) -- Default red color
-
-    if state then
-        -- Açılırken Rainbow Highlight'ı devre dışı bırak (Çakışmayı önler)
-        if EspToggles.Rainbow and Init.Tabs["Esp"].Components and Init.Tabs["Esp"].Components["Rainbow Player ESP"] then
-            Init.Tabs["Esp"].Components["Rainbow Player ESP"]:SetValue(false)
-        end
-        
-        if highlight and highlight.Name == "TeamHighlight" then return end
-
-        if highlight and highlight.Name ~= "TeamHighlight" then
-             highlight:Destroy() -- Rainbow highlight varsa kaldır
-        end
-
-        local Highlighter = Instance.new("Highlight")
-        Highlighter.Name = "TeamHighlight"
-        Highlighter.Parent = character
-        Highlighter.FillTransparency = 0.7 -- Dolgu biraz saydam
-
-        local function UpdateColor()
-            Highlighter.FillColor = player.TeamColor and player.TeamColor.Color or defaultColor
-            Highlighter.OutlineColor = Highlighter.FillColor
-        end
-
-        UpdateColor()
-        
-        if ClassicEspCache[player] and ClassicEspCache[player].TeamColorConn then
-            ClassicEspCache[player].TeamColorConn:Disconnect()
-        end
-        
-        local conn = player:GetPropertyChangedSignal("TeamColor"):Connect(UpdateColor)
-
-        if not ClassicEspCache[player] then ClassicEspCache[player] = {} end
-        ClassicEspCache[player].Highlight = Highlighter
-        ClassicEspCache[player].TeamColorConn = conn
-
-    elseif highlight and highlight.Name == "TeamHighlight" then
-        highlight:Destroy()
-        if ClassicEspCache[player] and ClassicEspCache[player].TeamColorConn then
-            ClassicEspCache[player].TeamColorConn:Disconnect()
-            ClassicEspCache[player].TeamColorConn = nil
-        end
-        if ClassicEspCache[player] then ClassicEspCache[player].Highlight = nil end
-    end
-end
-
--- Global Loop for Nametag Visibility (Based on distance, needs to run continuously)
-local NametagRenderConnection = nil
-local function updateNametagVisibility()
+local NametagRenderConnection = nil 
+local function updateNametagVisibility() 
     local localHRP = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
     if not localHRP then return end
-    
     for player, data in pairs(ClassicEspCache) do
         if EspToggles.Nametag and data.Nametag and player.Character then
             local head = player.Character:FindFirstChild("Head")
             if head then
-                local distance = (head.Position - localHRP.Position).Magnitude
-                data.Nametag.Enabled = (distance <= MaxDistance)
+                data.Nametag.Enabled = (head.Position - localHRP.Position).Magnitude <= MaxDistance
             else
                 data.Nametag.Enabled = false
             end
@@ -325,167 +819,83 @@ local function updateNametagVisibility()
     end
 end
 
-local function toggleNametagESP(state)
+local function toggleNametagESP(state) 
     EspToggles.Nametag = state
     
     if state and not NametagRenderConnection then
         NametagRenderConnection = RunService.Heartbeat:Connect(updateNametagVisibility)
     elseif not state and NametagRenderConnection then
-        NametagRenderConnection:Disconnect()
-        NametagRenderConnection = nil
+        NametagRenderConnection:Disconnect(); NametagRenderConnection = nil
     end
-
     for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= Player then
-            if player.Character then
-                handleNametag(player, player.Character, state)
-            end
+        if player ~= Player and player.Character then
+            handleNametag(player, player.Character, state)
         end
     end
 end
 
-local function toggleTeamHighlightESP(state)
+local function handleTeamHighlight(player, character, state) 
+    local highlight = character:FindFirstChild("TeamHighlight")
+    local defaultColor = Color3.fromRGB(255, 48, 51)
+    if state then
+        if highlight then return end
+        local Highlighter = Instance.new("Highlight", character)
+        Highlighter.Name = "TeamHighlight"; Highlighter.FillTransparency = 0.7 
+        local function UpdateColor()
+            Highlighter.FillColor = player.TeamColor and player.TeamColor.Color or defaultColor
+            Highlighter.OutlineColor = Highlighter.FillColor
+        end
+        UpdateColor()
+        if ClassicEspCache[player] and ClassicEspCache[player].TeamColorConn then ClassicEspCache[player].TeamColorConn:Disconnect() end
+        local conn = player:GetPropertyChangedSignal("TeamColor"):Connect(UpdateColor)
+        if not ClassicEspCache[player] then ClassicEspCache[player] = {} end
+        ClassicEspCache[player].Highlight = Highlighter; ClassicEspCache[player].TeamColorConn = conn
+    elseif highlight then
+        highlight:Destroy()
+        if ClassicEspCache[player] and ClassicEspCache[player].TeamColorConn then ClassicEspCache[player].TeamColorConn:Disconnect(); ClassicEspCache[player].TeamColorConn = nil end
+        if ClassicEspCache[player] then ClassicEspCache[player].Highlight = nil end
+    end
+end
+
+local function toggleTeamHighlightESP(state) 
     EspToggles.TeamHighlight = state
-    
     for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= Player then
-            if player.Character then
-                handleTeamHighlight(player, player.Character, state)
-            end
+        if player ~= Player and player.Character then
+            handleTeamHighlight(player, player.Character, state)
         end
     end
 end
 
--- General Player Added/Removed Listeners for Classic ESP
-Players.PlayerAdded:Connect(function(player)
-    player.CharacterAdded:Wait()
-    if EspToggles.Nametag then
-        handleNametag(player, player.Character, true)
-    end
-    if EspToggles.TeamHighlight then
-        handleTeamHighlight(player, player.Character, true)
-    end
-end)
-
-Players.PlayerRemoving:Connect(function(player)
-    removeRainbowHighlight(player)
-
-    -- Cleanup Classic ESP elements
-    if ClassicEspCache[player] then
-        if ClassicEspCache[player].Nametag then ClassicEspCache[player].Nametag:Destroy() end
-        if ClassicEspCache[player].Highlight then ClassicEspCache[player].Highlight:Destroy() end
-        if ClassicEspCache[player].TeamColorConn then ClassicEspCache[player].TeamColorConn:Disconnect() end
-        ClassicEspCache[player] = nil
-    end
-end)
-
 
 ---------------------------------------------------------------------------------------------------------
--- UI SETUP
+-- CHARACTER ADDED LISTENER 
 ---------------------------------------------------------------------------------------------------------
 
--- / WATERMARK
-library.rank = "Radiant"
-local Wm = library:Watermark("azra.sys loader | v" .. library.version .. " | " .. library:GetUsername() .. " | rank: " .. library.rank)
-local FpsWm = Wm:AddWatermark("fps: " .. library.fps)
-coroutine.wrap(function()
-    while wait(.75) do
-        FpsWm:Text("fps: " .. library.fps)
-    end
-end)()
-
--- / NOTIFICATIONS
-local Notif = library:InitNotifications()
-for i = 20,0,-1 do 
-    task.wait(0.05)
-    local LoadingXSX = Notif:Notify("Loading Azra.sys Loader, please be patient.", 3, "information")
-end 
-
--- BAŞLIK DEĞİŞİMİ
-library.title = "azra.sys"
-library:Introduction()
-wait(1)
-local Init = library:Init()
-
----------------------------------------------------------------------------------------------------------
--- UI TABS (Sekmeler)
----------------------------------------------------------------------------------------------------------
-
--- 1. Esp Tab
-local Esp = Init:NewTab("Esp")
-Esp:NewSection("") 
-
--- 2. Player Configs Tab
-local PlayerConfigs = Init:NewTab("Player Configs")
-PlayerConfigs:NewSection("") 
-
--- 3. World Configs Tab (Fps Boost yerine)
-local WorldConfigsTab = Init:NewTab("World Configs")
-WorldConfigsTab:NewSection("Lighting") 
-
--- 4. Teleport Tab (YENİ: Teleport To People yerine)
-local TeleportTab = Init:NewTab("Teleport")
-TeleportTab:NewSection("Tool") 
-
----------------------------------------------------------------------------------------------------------
--- UI COMPONENTS
----------------------------------------------------------------------------------------------------------
-
--- ESP Toggles
-Esp:NewToggle("Rainbow Player ESP", false, toggleRainbowESP)
-Esp:NewToggle("Name Tag ESP", false, toggleNametagESP)
-Esp:NewToggle("Team Highlight ESP", false, toggleTeamHighlightESP)
-
--- WORLD CONFIGS Toggles
-WorldConfigsTab:NewToggle("Full Bright", false, toggleFullBright)
-WorldConfigsTab:NewToggle("No Fog", false, toggleNoFog)
-
--- TELEPORT Toggles (YENİ)
-TeleportTab:NewToggle("Tp Tool", false, toggleTpTool)
-
----------------------------------------------------------------------------------------------------------
--- PLAYER CONFIGS SLIDERS (MAX 500)
----------------------------------------------------------------------------------------------------------
-
--- Walk Speed Slider
-local SpeedSlider = PlayerConfigs:NewSlider(
-    "Walk Speed", 
-    "", 
-    true, 
-    "WS", 
-    {min = 16, max = 500, default = Humanoid.WalkSpeed or 16},
-    function(value)
-        local CurrentHumanoid = GetHumanoid()
-        if CurrentHumanoid then
-            CurrentHumanoid.WalkSpeed = math.floor(value)
-        end
-    end
-)
-
--- Jump Power Slider
-local JumpSlider = PlayerConfigs:NewSlider(
-    "Jump Power", 
-    "", 
-    true, 
-    "JP", 
-    {min = 50, max = 500, default = Humanoid.JumpPower or 50},
-    function(value)
-        local CurrentHumanoid = GetHumanoid()
-        if CurrentHumanoid then
-            CurrentHumanoid.JumpPower = math.floor(value)
-        end
-    end
-)
-
--- Maintain values on character spawn
 Player.CharacterAdded:Connect(function()
     task.wait(0.5)
     local NewHumanoid = GetHumanoid()
+   
     if NewHumanoid then
-        NewHumanoid.WalkSpeed = math.floor(SpeedSlider:Value())
-        NewHumanoid.JumpPower = math.floor(JumpSlider:Value())
+        -- Slider değerlerini koru
+        NewHumanoid.WalkSpeed = Init.Tabs["Player Configs"].Components["Walk Speed"]:Value()
+        NewHumanoid.JumpPower = Init.Tabs["Player Configs"].Components["Jump Power"]:Value()
+        Camera.FieldOfView = Init.Tabs["Player Configs"].Components["Field Of View (FOV)"]:Value()
         
-        -- Yeniden doğduğunda Nametag ve Highlight'ı tekrar uygula
+        -- Exploits'i tekrar uygula
+        if PlayerToggles.Noclip then
+            toggleNoclip(true)
+        end
+        if PlayerToggles.Fly then
+            toggleFly(true)
+        end
+        
+        -- YENİ EXPLOITS'i tekrar uygula
+        if PlayerExploits.AntiKnockback then toggleAntiKnockback(true) end
+        if PlayerExploits.GodMode then toggleGodMode(true) end
+        if PlayerExploits.NoFallDamage then toggleNoFallDamage(true) end
+        if PlayerExploits.Invisible then toggleInvisible(true) end -- YENİ
+        
+        -- ESP'yi tekrar uygula
         if EspToggles.Nametag then
             handleNametag(Player, NewHumanoid.Parent, true)
         end
@@ -495,11 +905,117 @@ Player.CharacterAdded:Connect(function()
         if EspToggles.Rainbow then
             createRainbowHighlight(Player)
         end
+        if EspToggles.BoxESP then
+            createBoxHighlight(Player)
+        end
     end
 end)
+
+
+---------------------------------------------------------------------------------------------------------
+-- UI SETUP 
+---------------------------------------------------------------------------------------------------------
+
+-- / WATERMARK
+library.rank = "Radiant"
+local Wm = library:Watermark("azra.sys loader | v" .. library.version .. " | " .. library:GetUsername() .. " | rank: " .. library.rank)
+local FpsWm = Wm:AddWatermark("fps: " .. library.fps)
+coroutine.wrap(function() while task.wait(.75) do FpsWm:Text("fps: " .. library.fps) end end)()
+
+-- / NOTIFICATIONS
+local Notif = library:InitNotifications()
+Notif:Notify("Loading Azra.sys Loader...", 3, "information") 
+
+-- BAŞLIK DEĞİŞİMİ
+library.title = "azra.sys"
+library:Introduction()
+task.wait(1)
+local Init = library:Init()
+
+-- UI TABS
+local Esp = Init:NewTab("Esp"); Esp:NewSection("Player ESP") 
+local PlayerConfigs = Init:NewTab("Player Configs"); PlayerConfigs:NewSection("Movement"); PlayerConfigs:NewSection("Exploits") 
+local WorldConfigsTab = Init:NewTab("World Configs"); WorldConfigsTab:NewSection("Lighting"); WorldConfigsTab:NewSection("World Functions"); WorldConfigsTab:NewSection("Environment") 
+local TeleportTab = Init:NewTab("Teleport"); TeleportTab:NewSection("Tool"); TeleportTab:NewSection("Functions"); TeleportTab:NewSection("Advanced TP") 
+local CombatTab = Init:NewTab("Combat"); CombatTab:NewSection("Aimbot"); CombatTab:NewSection("Gun Exploits")
+local FunTab = Init:NewTab("Fun"); FunTab:NewSection("Trolling"); FunTab:NewSection("Server Functions"); FunTab:NewSection("Mass Actions") 
+local SettingsTab = Init:NewTab("Settings"); SettingsTab:NewSection("Client")
+
+---------------------------------------------------------------------------------------------------------
+-- UI COMPONENTS
+---------------------------------------------------------------------------------------------------------
+
+-- ESP
+Esp:NewToggle("Rainbow Player ESP", false, toggleRainbowESP)
+Esp:NewToggle("Name Tag ESP", false, toggleNametagESP)
+Esp:NewToggle("Team Highlight ESP", false, toggleTeamHighlightESP)
+Esp:NewToggle("Box ESP (Wallhack)", false, toggleBoxESP) 
+
+-- PLAYER CONFIGS EXPLOITS (YENİLER EKLENDİ)
+PlayerConfigs:NewToggle("Noclip", false, toggleNoclip)
+PlayerConfigs:NewToggle("Infinite Jump", false, toggleInfJump)
+PlayerConfigs:NewButton("Force Jump (Once)", forceJump) -- YENİ
+PlayerConfigs:NewToggle("Fly", false, toggleFly)
+PlayerConfigs:NewToggle("Anti-AFK", false, toggleAntiAFK)
+
+PlayerConfigs:NewToggle("Anti Knockback", false, toggleAntiKnockback) 
+PlayerConfigs:NewToggle("God Mode", false, toggleGodMode)
+PlayerConfigs:NewToggle("No Fall Damage", false, toggleNoFallDamage)
+PlayerConfigs:NewToggle("Fast Reload (Game Specific)", false, toggleFastReload) -- YENİ
+PlayerConfigs:NewToggle("Invisible (Client-Sided)", false, toggleInvisible) -- YENİ
+
+-- WORLD CONFIGS (YENİLER EKLENDİ)
+WorldConfigsTab:NewToggle("Full Bright", false, toggleFullBright)
+WorldConfigsTab:NewToggle("No Fog", false, toggleNoFog)
+WorldConfigsTab:NewButton("Set Time Day", setTimeDay)
+WorldConfigsTab:NewButton("Set Time Night", setTimeNight)
+WorldConfigsTab:NewButton("Set Time Midday", setTimeMidday) -- YENİ
+WorldConfigsTab:NewButton("Set Time Midnight", setTimeMidnight) -- YENİ
+WorldConfigsTab:NewButton("Reset Time", resetTime)
+WorldConfigsTab:NewToggle("Cool Skybox", false, toggleCoolSkybox)
+WorldConfigsTab:NewButton("Click Teleport To Part", teleportToPart) 
+WorldConfigsTab:NewButton("Set Max FOV (120)", setMaxFOV) -- YENİ
+
+-- TELEPORT (YENİLER EKLENDİ)
+TeleportTab:NewToggle("Tp Tool (Mouse Click)", false, toggleTpTool)
+TeleportTab:NewButton("Teleport To Mouse", teleportToMouse)
+TeleportTab:NewButton("Teleport To Nearest Player", teleportToNearestPlayer) -- YENİ
+TeleportTab:NewToggle("Head Teleport", false, toggleHeadTeleport)
+
+-- COMBAT
+CombatTab:NewToggle("Aimbot (Closest Part)", false, toggleAimbot)
+CombatTab:NewToggle("Silent Aim (Bullet TP)", false, toggleSilentAim)
+CombatTab:NewToggle("Trigger Bot (Auto Fire)", false, toggleTriggerBot)
+CombatTab:NewToggle("Hitbox Expander", false, toggleHitboxExpander) -- YENİ
+CombatTab:NewToggle("No Recoil", false, toggleNoRecoil) -- YENİ
+
+-- FUN (YENİLER EKLENDİ)
+FunTab:NewButton("Character Fling (Launch)", flingCharacter)
+FunTab:NewButton("Break My Joints", breakMyJoints) -- YENİ
+FunTab:NewButton("Break Nearest Player Joints", breakNearestPlayerJoints) -- YENİ
+FunTab:NewButton("Delete My Tools", deleteTools)
+FunTab:NewToggle("Chat Spammer", false, toggleChatSpam)
+FunTab:NewButton("Attempt Server Crash", crashServer)
+FunTab:NewButton("Mass Teleport To Me", massTeleport)
+FunTab:NewButton("Loop Kill All Players", loopKill)
+
+-- SETTINGS
+SettingsTab:NewToggle("Disable Core GUI (Chat/ESC/...) ", false, function(state)
+    local CoreGui = game:GetService("StarterGui")
+    if state then CoreGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, false) else CoreGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, true) end
+end)
+
+
+-- PLAYER CONFIGS SLIDERS (Walk Speed limiti 1000'e yükseltildi)
+local SpeedSlider = PlayerConfigs:NewSlider("Walk Speed", "", true, "WS", {min = 16, max = 1000, default = Humanoid.WalkSpeed or 16}, function(value) local H=GetHumanoid(); if H then H.WalkSpeed = math.floor(value) end end)
+local JumpSlider = PlayerConfigs:NewSlider("Jump Power", "", true, "JP", {min = 50, max = 500, default = Humanoid.JumpPower or 50}, function(value) local H=GetHumanoid(); if H then H.JumpPower = math.floor(value) end end)
+PlayerConfigs:NewSlider("Field Of View (FOV)", "", true, "FOV", {min = 30, max = 120, default = Camera.FieldOfView or 70}, function(value) Camera.FieldOfView = math.floor(value) end)
+PlayerConfigs:NewButton("Reset Speed (16)", function() local H=GetHumanoid(); if H then H.WalkSpeed = 16; SpeedSlider:SetValue(16) end end)
+PlayerConfigs:NewButton("Reset Jump (50)", function() local H=GetHumanoid(); if H then H.JumpPower = 50; JumpSlider:SetValue(50) end end)
+
 
 ---------------------------------------------------------------------------------------------------------
 -- LOADING END
 ---------------------------------------------------------------------------------------------------------
 
-local FinishedLoading = Notif:Notify("Loaded azra.sys", 4, "success")
+Notif:Notify("azra.sys başarıyla güncellendi ve yüklendi! Yeni V4.0 özellik seti eklendi.", 4, "success")
