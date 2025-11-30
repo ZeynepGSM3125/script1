@@ -1,0 +1,505 @@
+local library = loadstring(game:HttpGet("https://raw.githubusercontent.com/Consistt/Ui/main/UnLeaked"))()
+
+-- / Player and Character Definitions & Services
+local Player = game:GetService("Players").LocalPlayer
+local mouse = Player:GetMouse() -- YENİ EKLENDİ
+local Character = Player.Character or Player.CharacterAdded:Wait()
+local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Lighting = game:GetService("Lighting") -- Önceki adımdan korundu
+local MaxDistance = 400.5 -- Nametag menzili (studs)
+
+-- Global Toggles
+local EspToggles = {
+    Rainbow = false,        -- Rainbow Highlight
+    Nametag = false,        -- BillboardGui Nametag
+    TeamHighlight = false,  -- TeamColor Highlight
+}
+
+local WorldConfigs = { -- Önceki adımdan korundu
+    FullBright = false,
+    NoFog = false,
+}
+
+local TeleportToolCache = {} -- YENİ EKLENDİ
+
+-- Varsayılan Lighting değerlerini kaydet (Önceki adımdan korundu)
+local DefaultLighting = { 
+    Ambient = Lighting.Ambient,
+    OutdoorAmbient = Lighting.OutdoorAmbient,
+    Brightness = Lighting.Brightness,
+    GlobalShadows = Lighting.GlobalShadows,
+    FogEnd = Lighting.FogEnd,
+    FogStart = Lighting.FogStart,
+    ClockTime = Lighting.ClockTime,
+}
+
+-- ESP Caches
+local RainbowEspCache = {} 
+local ClassicEspCache = {} 
+
+-- Function to safely get the Humanoid
+local function GetHumanoid()
+    Character = Player.Character or Player.CharacterAdded:Wait()
+    Humanoid = Character:FindFirstChildOfClass("Humanoid")
+    return Humanoid
+end
+
+---------------------------------------------------------------------------------------------------------
+-- WORLD CONFIGS MODULE (Full Bright & No Fog) 
+---------------------------------------------------------------------------------------------------------
+
+local function toggleFullBright(state)
+    WorldConfigs.FullBright = state
+    if state then
+        Lighting.Ambient = Color3.fromRGB(255, 255, 255)
+        Lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+        Lighting.Brightness = 2
+        Lighting.ShadowSoftness = 0
+        Lighting.GlobalShadows = false
+    else
+        Lighting.Ambient = DefaultLighting.Ambient
+        Lighting.OutdoorAmbient = DefaultLighting.OutdoorAmbient
+        Lighting.Brightness = DefaultLighting.Brightness
+        
+        if not WorldConfigs.NoFog then
+            Lighting.GlobalShadows = DefaultLighting.GlobalShadows
+        end
+    end
+end
+
+local function toggleNoFog(state)
+    WorldConfigs.NoFog = state
+    if state then
+        Lighting.FogEnd = 100000
+        Lighting.FogStart = 0
+        Lighting.ClockTime = 14
+        Lighting.Brightness = 2
+        Lighting.GlobalShadows = false
+    else
+        Lighting.FogEnd = DefaultLighting.FogEnd
+        Lighting.FogStart = DefaultLighting.FogStart
+        Lighting.ClockTime = DefaultLighting.ClockTime
+        
+        if not WorldConfigs.FullBright then
+            Lighting.Brightness = DefaultLighting.Brightness
+            Lighting.GlobalShadows = DefaultLighting.GlobalShadows
+        end
+    end
+end
+
+---------------------------------------------------------------------------------------------------------
+-- TELEPORT TOOL MODULE (YENİ EKLENDİ)
+---------------------------------------------------------------------------------------------------------
+
+local function toggleTpTool(state)
+    if state then
+        if TeleportToolCache.Tool then return end -- Zaten varsa tekrar oluşturma
+
+        local tool = Instance.new("Tool")
+        tool.RequiresHandle = false
+        tool.Name = "Teleport Tool"
+        
+        tool.Activated:Connect(function()
+            local pos = mouse.Hit.Position + Vector3.new(0, 2.5, 0)
+            local posCFrame = CFrame.new(pos)
+            local char = Player.Character
+            if char and char:FindFirstChild("HumanoidRootPart") then
+                char.HumanoidRootPart.CFrame = posCFrame
+            end
+        end)
+        
+        -- Aracı envantere yerleştir
+        local backpack = Player:FindFirstChild("Backpack")
+        if backpack then
+            tool.Parent = backpack
+        else
+            tool.Parent = Player:FindFirstChild("StarterGear") 
+        end
+
+        TeleportToolCache.Tool = tool
+
+    elseif TeleportToolCache.Tool then
+        TeleportToolCache.Tool:Destroy()
+        TeleportToolCache.Tool = nil
+    end
+end
+
+---------------------------------------------------------------------------------------------------------
+-- RAINBOW ESP MODULE (Highlight-based)
+---------------------------------------------------------------------------------------------------------
+
+local ColorUpdateConnection = nil
+
+-- Function to create rainbow color
+local function rainbowColor()
+    local time = tick() * 3
+    return Color3.new(math.sin(time) * 0.5 + 0.5, math.sin(time + 2) * 0.5 + 0.5, math.sin(time + 4) * 0.5 + 0.5)
+end
+
+-- Function to create and link Rainbow Highlight
+local function createRainbowHighlight(player)
+    if RainbowEspCache[player] then return end
+    
+    local highlight = Instance.new("Highlight")
+    highlight.FillColor = Color3.new(1, 1, 1)
+    highlight.FillTransparency = 1
+    highlight.OutlineColor = rainbowColor()
+    highlight.OutlineTransparency = 0
+    highlight.Parent = player.Character or game.Workspace
+    
+    RainbowEspCache[player] = {Highlight = highlight}
+    
+    -- Update ESP outline when character spawns
+    RainbowEspCache[player].CharacterAddedConn = player.CharacterAdded:Connect(function(character)
+        if EspToggles.Rainbow and highlight and highlight.Parent ~= character then
+            highlight.Parent = character
+        end
+    end)
+end
+
+-- Function to remove Rainbow Highlight
+local function removeRainbowHighlight(player)
+    if RainbowEspCache[player] then
+        if RainbowEspCache[player].Highlight then
+            RainbowEspCache[player].Highlight:Destroy()
+        end
+        if RainbowEspCache[player].CharacterAddedConn then
+            RainbowEspCache[player].CharacterAddedConn:Disconnect()
+        end
+        RainbowEspCache[player] = nil
+    end
+end
+
+-- Main function to toggle Rainbow ESP
+local function toggleRainbowESP(state)
+    EspToggles.Rainbow = state
+    
+    if state then
+        -- Açılırken Team Highlight'ı devre dışı bırak (Çakışmayı önler)
+        if EspToggles.TeamHighlight and Init.Tabs["Esp"].Components and Init.Tabs["Esp"].Components["Team Highlight ESP"] then
+            Init.Tabs["Esp"].Components["Team Highlight ESP"]:SetValue(false)
+        end
+        
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= Player then
+                createRainbowHighlight(player)
+            end
+        end
+        
+        -- Start continuous rainbow color update
+        if not ColorUpdateConnection then
+            ColorUpdateConnection = RunService.RenderStepped:Connect(function()
+                for _, data in pairs(RainbowEspCache) do
+                    if data.Highlight then
+                        data.Highlight.OutlineColor = rainbowColor()
+                    end
+                end
+            end)
+        end
+        
+    else
+        -- Stop color update
+        if ColorUpdateConnection then
+            ColorUpdateConnection:Disconnect()
+            ColorUpdateConnection = nil
+        end
+        
+        -- Remove highlights from all players
+        for player, _ in pairs(RainbowEspCache) do
+            removeRainbowHighlight(player)
+        end
+    end
+end
+
+---------------------------------------------------------------------------------------------------------
+-- CLASSIC ESP MODULE (Nametag & Team Highlight)
+---------------------------------------------------------------------------------------------------------
+
+-- Nametag Helper: Create or Remove
+local function handleNametag(player, character, state)
+    local head = character:FindFirstChild("Head")
+    if not head then return end
+
+    local nametag = head:FindFirstChild("Nametag")
+    if state then
+        if nametag then return end -- Already exists
+
+        local BillboardGui = Instance.new("BillboardGui")
+        BillboardGui.Name = "Nametag"
+        BillboardGui.Adornee = head
+        BillboardGui.Size = UDim2.new(0, 75, 0, 150)
+        BillboardGui.StudsOffset = Vector3.new(0, 2, 0)
+        BillboardGui.AlwaysOnTop = true
+        BillboardGui.Enabled = true -- Başlangıçta aktif
+
+        local TextLabel = Instance.new("TextLabel")
+        TextLabel.Size = UDim2.new(1, 0, 1, 0)
+        TextLabel.Text = player.Name
+        TextLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        TextLabel.BackgroundTransparency = 1
+        TextLabel.TextStrokeTransparency = 0.75
+        TextLabel.Font = Enum.Font.Code
+        TextLabel.TextScaled = true
+        TextLabel.Parent = BillboardGui
+
+        BillboardGui.Parent = head
+        
+        if not ClassicEspCache[player] then ClassicEspCache[player] = {} end
+        ClassicEspCache[player].Nametag = BillboardGui
+
+    elseif nametag then
+        nametag:Destroy()
+        if ClassicEspCache[player] then ClassicEspCache[player].Nametag = nil end
+    end
+end
+
+-- Highlight Helper: Create or Remove
+local function handleTeamHighlight(player, character, state)
+    local highlight = character:FindFirstChildOfClass("Highlight")
+    local defaultColor = Color3.fromRGB(255, 48, 51) -- Default red color
+
+    if state then
+        -- Açılırken Rainbow Highlight'ı devre dışı bırak (Çakışmayı önler)
+        if EspToggles.Rainbow and Init.Tabs["Esp"].Components and Init.Tabs["Esp"].Components["Rainbow Player ESP"] then
+            Init.Tabs["Esp"].Components["Rainbow Player ESP"]:SetValue(false)
+        end
+        
+        if highlight and highlight.Name == "TeamHighlight" then return end
+
+        if highlight and highlight.Name ~= "TeamHighlight" then
+             highlight:Destroy() -- Rainbow highlight varsa kaldır
+        end
+
+        local Highlighter = Instance.new("Highlight")
+        Highlighter.Name = "TeamHighlight"
+        Highlighter.Parent = character
+        Highlighter.FillTransparency = 0.7 -- Dolgu biraz saydam
+
+        local function UpdateColor()
+            Highlighter.FillColor = player.TeamColor and player.TeamColor.Color or defaultColor
+            Highlighter.OutlineColor = Highlighter.FillColor
+        end
+
+        UpdateColor()
+        
+        if ClassicEspCache[player] and ClassicEspCache[player].TeamColorConn then
+            ClassicEspCache[player].TeamColorConn:Disconnect()
+        end
+        
+        local conn = player:GetPropertyChangedSignal("TeamColor"):Connect(UpdateColor)
+
+        if not ClassicEspCache[player] then ClassicEspCache[player] = {} end
+        ClassicEspCache[player].Highlight = Highlighter
+        ClassicEspCache[player].TeamColorConn = conn
+
+    elseif highlight and highlight.Name == "TeamHighlight" then
+        highlight:Destroy()
+        if ClassicEspCache[player] and ClassicEspCache[player].TeamColorConn then
+            ClassicEspCache[player].TeamColorConn:Disconnect()
+            ClassicEspCache[player].TeamColorConn = nil
+        end
+        if ClassicEspCache[player] then ClassicEspCache[player].Highlight = nil end
+    end
+end
+
+-- Global Loop for Nametag Visibility (Based on distance, needs to run continuously)
+local NametagRenderConnection = nil
+local function updateNametagVisibility()
+    local localHRP = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+    if not localHRP then return end
+    
+    for player, data in pairs(ClassicEspCache) do
+        if EspToggles.Nametag and data.Nametag and player.Character then
+            local head = player.Character:FindFirstChild("Head")
+            if head then
+                local distance = (head.Position - localHRP.Position).Magnitude
+                data.Nametag.Enabled = (distance <= MaxDistance)
+            else
+                data.Nametag.Enabled = false
+            end
+        elseif data.Nametag then
+            data.Nametag.Enabled = false
+        end
+    end
+end
+
+local function toggleNametagESP(state)
+    EspToggles.Nametag = state
+    
+    if state and not NametagRenderConnection then
+        NametagRenderConnection = RunService.Heartbeat:Connect(updateNametagVisibility)
+    elseif not state and NametagRenderConnection then
+        NametagRenderConnection:Disconnect()
+        NametagRenderConnection = nil
+    end
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= Player then
+            if player.Character then
+                handleNametag(player, player.Character, state)
+            end
+        end
+    end
+end
+
+local function toggleTeamHighlightESP(state)
+    EspToggles.TeamHighlight = state
+    
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= Player then
+            if player.Character then
+                handleTeamHighlight(player, player.Character, state)
+            end
+        end
+    end
+end
+
+-- General Player Added/Removed Listeners for Classic ESP
+Players.PlayerAdded:Connect(function(player)
+    player.CharacterAdded:Wait()
+    if EspToggles.Nametag then
+        handleNametag(player, player.Character, true)
+    end
+    if EspToggles.TeamHighlight then
+        handleTeamHighlight(player, player.Character, true)
+    end
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+    removeRainbowHighlight(player)
+
+    -- Cleanup Classic ESP elements
+    if ClassicEspCache[player] then
+        if ClassicEspCache[player].Nametag then ClassicEspCache[player].Nametag:Destroy() end
+        if ClassicEspCache[player].Highlight then ClassicEspCache[player].Highlight:Destroy() end
+        if ClassicEspCache[player].TeamColorConn then ClassicEspCache[player].TeamColorConn:Disconnect() end
+        ClassicEspCache[player] = nil
+    end
+end)
+
+
+---------------------------------------------------------------------------------------------------------
+-- UI SETUP
+---------------------------------------------------------------------------------------------------------
+
+-- / WATERMARK
+library.rank = "Radiant"
+local Wm = library:Watermark("azra.sys loader | v" .. library.version .. " | " .. library:GetUsername() .. " | rank: " .. library.rank)
+local FpsWm = Wm:AddWatermark("fps: " .. library.fps)
+coroutine.wrap(function()
+    while wait(.75) do
+        FpsWm:Text("fps: " .. library.fps)
+    end
+end)()
+
+-- / NOTIFICATIONS
+local Notif = library:InitNotifications()
+for i = 20,0,-1 do 
+    task.wait(0.05)
+    local LoadingXSX = Notif:Notify("Loading Azra.sys Loader, please be patient.", 3, "information")
+end 
+
+-- BAŞLIK DEĞİŞİMİ
+library.title = "azra.sys"
+library:Introduction()
+wait(1)
+local Init = library:Init()
+
+---------------------------------------------------------------------------------------------------------
+-- UI TABS (Sekmeler)
+---------------------------------------------------------------------------------------------------------
+
+-- 1. Esp Tab
+local Esp = Init:NewTab("Esp")
+Esp:NewSection("") 
+
+-- 2. Player Configs Tab
+local PlayerConfigs = Init:NewTab("Player Configs")
+PlayerConfigs:NewSection("") 
+
+-- 3. World Configs Tab (Fps Boost yerine)
+local WorldConfigsTab = Init:NewTab("World Configs")
+WorldConfigsTab:NewSection("Lighting") 
+
+-- 4. Teleport Tab (YENİ: Teleport To People yerine)
+local TeleportTab = Init:NewTab("Teleport")
+TeleportTab:NewSection("Tool") 
+
+---------------------------------------------------------------------------------------------------------
+-- UI COMPONENTS
+---------------------------------------------------------------------------------------------------------
+
+-- ESP Toggles
+Esp:NewToggle("Rainbow Player ESP", false, toggleRainbowESP)
+Esp:NewToggle("Name Tag ESP", false, toggleNametagESP)
+Esp:NewToggle("Team Highlight ESP", false, toggleTeamHighlightESP)
+
+-- WORLD CONFIGS Toggles
+WorldConfigsTab:NewToggle("Full Bright", false, toggleFullBright)
+WorldConfigsTab:NewToggle("No Fog", false, toggleNoFog)
+
+-- TELEPORT Toggles (YENİ)
+TeleportTab:NewToggle("Tp Tool", false, toggleTpTool)
+
+---------------------------------------------------------------------------------------------------------
+-- PLAYER CONFIGS SLIDERS (MAX 500)
+---------------------------------------------------------------------------------------------------------
+
+-- Walk Speed Slider
+local SpeedSlider = PlayerConfigs:NewSlider(
+    "Walk Speed", 
+    "", 
+    true, 
+    "WS", 
+    {min = 16, max = 500, default = Humanoid.WalkSpeed or 16},
+    function(value)
+        local CurrentHumanoid = GetHumanoid()
+        if CurrentHumanoid then
+            CurrentHumanoid.WalkSpeed = math.floor(value)
+        end
+    end
+)
+
+-- Jump Power Slider
+local JumpSlider = PlayerConfigs:NewSlider(
+    "Jump Power", 
+    "", 
+    true, 
+    "JP", 
+    {min = 50, max = 500, default = Humanoid.JumpPower or 50},
+    function(value)
+        local CurrentHumanoid = GetHumanoid()
+        if CurrentHumanoid then
+            CurrentHumanoid.JumpPower = math.floor(value)
+        end
+    end
+)
+
+-- Maintain values on character spawn
+Player.CharacterAdded:Connect(function()
+    task.wait(0.5)
+    local NewHumanoid = GetHumanoid()
+    if NewHumanoid then
+        NewHumanoid.WalkSpeed = math.floor(SpeedSlider:Value())
+        NewHumanoid.JumpPower = math.floor(JumpSlider:Value())
+        
+        -- Yeniden doğduğunda Nametag ve Highlight'ı tekrar uygula
+        if EspToggles.Nametag then
+            handleNametag(Player, NewHumanoid.Parent, true)
+        end
+        if EspToggles.TeamHighlight then
+            handleTeamHighlight(Player, NewHumanoid.Parent, true)
+        end
+        if EspToggles.Rainbow then
+            createRainbowHighlight(Player)
+        end
+    end
+end)
+
+---------------------------------------------------------------------------------------------------------
+-- LOADING END
+---------------------------------------------------------------------------------------------------------
+
+local FinishedLoading = Notif:Notify("Loaded azra.sys", 4, "success")
